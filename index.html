@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Covid-19 Global Map</title>
+
+  <!-- D3 and TopoJSON -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* Ocean background — themed via CSS so toggle doesn't need JS attr update */
+    .ocean-bg { fill: #EEF2F7; }
+
+    /* Light mode (default) */
+    :root, html.light {
+      --bg:        #ffffff;
+      --bg2:       #f8f9fa;
+      --bg3:       #f1f3f5;
+      --text:      #1a1a1a;
+      --text2:     #6b7280;
+      --text3:     #9ca3af;
+      --border:    rgba(0,0,0,0.10);
+      --border2:   rgba(0,0,0,0.18);
+      --radius:    8px;
+      --radius-lg: 12px;
+      color-scheme: light;
+    }
+
+    /* Dark mode — system preference */
+    @media (prefers-color-scheme: dark) {
+      :root:not(.light) {
+        --bg:      #1a1a1a;
+        --bg2:     #242424;
+        --bg3:     #2e2e2e;
+        --text:    #f0f0f0;
+        --text2:   #9ca3af;
+        --text3:   #6b7280;
+        --border:  rgba(255,255,255,0.10);
+        --border2: rgba(255,255,255,0.20);
+        color-scheme: dark;
+      }
+    }
+
+    /* Dark mode — manual override */
+    html.dark {
+      --bg:      #1a1a1a;
+      --bg2:     #242424;
+      --bg3:     #2e2e2e;
+      --text:    #f0f0f0;
+      --text2:   #9ca3af;
+      --text3:   #6b7280;
+      --border:  rgba(255,255,255,0.10);
+      --border2: rgba(255,255,255,0.20);
+      color-scheme: dark;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg3);
+      color: var(--text);
+    }
+
+    h1 {
+      font-size: 15px; font-weight: 500;
+      padding: 10px 16px;
+      border-bottom: 0.5px solid var(--border);
+      background: var(--bg);
+      letter-spacing: -0.01em;
+      display: flex; align-items: center; gap: 0;
+    }
+    h1 span { font-weight: 400; color: var(--text2); font-size: 13px; margin-left: 8px; flex: 1; }
+    /* ── Global theme transition — smooth color changes on toggle ── */
+    *, *::before, *::after {
+      transition: background-color 0.35s ease, border-color 0.35s ease, color 0.25s ease;
+    }
+    /* Exclude things that shouldn't animate */
+    input[type=range], input[type=range]::-webkit-slider-thumb,
+    .cpath, .sgp-dot circle, #map-svg * { transition: none !important; }
+
+    /* ── Theme toggle slider ── */
+    #theme-btn {
+      margin-left: auto; background: none; border: none;
+      cursor: pointer; padding: 0; flex-shrink: 0;
+    }
+    /* Rectangular track — two equal icon cells side by side */
+    .theme-track {
+      width: 72px; height: 30px; border-radius: 4px;
+      background: var(--bg3); border: 0.5px solid var(--border2);
+      position: relative; display: flex; align-items: stretch;
+      overflow: hidden;
+    }
+    /* Each half holds one icon, centered */
+    .theme-icon-sun, .theme-icon-moon {
+      width: 36px; height: 100%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; line-height: 1; z-index: 2;
+      transition: color 0.25s ease;
+      pointer-events: none; user-select: none;
+      margin-left: 0;
+    }
+    /* Light mode: sun side is active (dark text), moon is muted */
+    .theme-icon-sun  { color: var(--text);  }
+    .theme-icon-moon { color: var(--text3); }
+    html.dark .theme-icon-sun  { color: var(--text3); }
+    html.dark .theme-icon-moon { color: var(--text);  }
+    @media (prefers-color-scheme: dark) {
+      :root:not(.light) .theme-icon-sun  { color: var(--text3); }
+      :root:not(.light) .theme-icon-moon { color: var(--text);  }
+    }
+    /* Sliding thumb — behind icons, no border to avoid offset */
+    .theme-thumb {
+      width: 36px; height: 100%; border-radius: 3px;
+      background: var(--bg);
+      position: absolute; top: 0; left: 0; z-index: 1;
+      transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+    }
+    html.dark .theme-thumb { transform: translateX(36px); }
+    @media (prefers-color-scheme: dark) {
+      :root:not(.light) .theme-thumb { transform: translateX(36px); }
+    }
+
+    /* ── Layout ── */
+    #app {
+      display: flex;
+      height: calc(100vh - 44px);
+    }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 200px;
+      flex-shrink: 0;
+      background: var(--bg);
+      border-right: 0.5px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #sb-head { padding: 10px 10px 8px; border-bottom: 0.5px solid var(--border); }
+    #sb-label {
+      font-size: 10px; font-weight: 600; color: var(--text2);
+      text-transform: uppercase; letter-spacing: .06em; margin-bottom: 7px;
+    }
+    #country-search {
+      width: 100%; padding: 5px 9px; font-size: 12px;
+      border: 0.5px solid var(--border2); border-radius: var(--radius);
+      background: var(--bg2); color: var(--text);
+    }
+    #country-search:focus { outline: none; border-color: #378ADD; }
+    #continent-list { flex: 1; overflow-y: auto; padding: 6px 8px; }
+    #sb-foot {
+      padding: 7px 10px; border-top: 0.5px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    #filter-status { font-size: 11px; color: var(--text2); }
+    #clear-btn {
+      font-size: 11px; color: var(--text2); background: none;
+      border: none; cursor: pointer; padding: 2px 0;
+    }
+    #clear-btn:hover { color: var(--text); }
+
+    /* Sidebar tree */
+    .cont-section { margin-bottom: 3px; }
+    .cont-hdr {
+      display: flex; align-items: center; gap: 5px;
+      padding: 4px 4px; cursor: pointer; user-select: none;
+      border-radius: 5px;
+    }
+    .cont-hdr:hover { background: var(--bg2); }
+    .cont-cb { width: 13px; height: 13px; cursor: pointer; flex-shrink: 0; accent-color: #378ADD; }
+    .cont-name { font-size: 12px; font-weight: 500; color: var(--text); flex: 1; }
+    .cont-arrow { font-size: 9px; color: var(--text3); }
+    .country-list { display: none; flex-direction: column; padding-left: 18px; gap: 0; }
+    .country-list.open { display: flex; }
+    .country-item {
+      display: flex; align-items: center; gap: 5px;
+      padding: 3px 4px; cursor: pointer; border-radius: 4px;
+    }
+    .country-item:hover { background: var(--bg2); }
+    .country-item input[type=checkbox] { width: 12px; height: 12px; cursor: pointer; flex-shrink: 0; accent-color: #378ADD; }
+    .country-item label { font-size: 11px; color: var(--text2); cursor: pointer; line-height: 1.3; }
+
+    /* ── Main area ── */
+    #main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+
+    /* Controls bar */
+    #ctrl-bar {
+      display: flex; align-items: center; gap: 14px;
+      padding: 8px 14px; border-bottom: 0.5px solid var(--border); flex-wrap: wrap;
+    }
+    .ctrl-group { display: flex; flex-direction: column; gap: 3px; }
+    .ctrl-lbl { font-size: 10px; color: var(--text2); font-weight: 500; }
+    .tog {
+      display: flex; border: 0.5px solid var(--border2);
+      border-radius: var(--radius); overflow: hidden;
+    }
+    .tog-btn {
+      padding: 4px 12px; font-size: 12px; cursor: pointer;
+      border: none; background: transparent; color: var(--text2); white-space: nowrap;
+    }
+    .tog-btn.on { background: var(--bg2); color: var(--text); font-weight: 500; }
+    .tog-btn:hover:not(.on) { background: var(--bg3); }
+    #map-subtitle { margin-left: auto; font-size: 11px; color: var(--text2); }
+
+    /* Map */
+    #map-wrap { flex: 1; position: relative; min-height: 0; background: var(--bg2); }
+    #map-svg { width: 100%; height: 100%; display: block; }
+
+    .cpath { cursor: pointer; stroke-width: .35; }
+    .cpath:hover { stroke-width: 1.4 !important; }
+    .cpath.sel { stroke-width: 2 !important; }
+
+    /* Tooltip */
+    #tt {
+      position: absolute; pointer-events: none;
+      background: var(--bg); border: 0.5px solid var(--border2);
+      border-radius: var(--radius); padding: 9px 11px;
+      font-size: 12px; display: none; z-index: 20; max-width: 210px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    }
+    .tt-name { font-weight: 500; font-size: 13px; color: var(--text); margin-bottom: 5px; }
+    .tt-row { display: flex; justify-content: space-between; gap: 14px; color: var(--text2); margin-top: 2px; font-size: 11px; }
+    .tt-v { color: var(--text); font-weight: 500; }
+    .tt-div { border-top: 0.5px solid var(--border); margin: 5px 0; }
+
+    /* Sparkline panel */
+    #spark-panel {
+      position: absolute; right: 12px; top: 12px;
+      width: 204px; background: var(--bg);
+      border: 0.5px solid var(--border2); border-radius: var(--radius-lg);
+      padding: 10px; display: none; z-index: 10;
+    }
+    #spark-title { font-size: 12px; font-weight: 500; color: var(--text); margin-bottom: 6px; padding-right: 18px; }
+    #spark-close {
+      position: absolute; top: 8px; right: 9px; cursor: pointer;
+      font-size: 13px; color: var(--text2); background: none; border: none; line-height: 1;
+    }
+    #spark-svg { width: 100%; height: 76px; }
+    #spark-msg { font-size: 11px; color: var(--text2); margin-top: 4px; }
+
+    /* Bottom bar */
+    #bottom { border-top: 0.5px solid var(--border); padding: 9px 14px; display: flex; flex-direction: column; gap: 7px; }
+    #legend-row { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+    #legend-title { font-size: 10px; color: var(--text2); font-weight: 500; white-space: nowrap; padding-top: 1px; }
+    #legend-swatches { display: flex; gap: 3px; flex-wrap: wrap; align-items: flex-start; }
+    .sw { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+    .sw-rect { width: 26px; height: 11px; border-radius: 2px; }
+    .sw-lbl { font-size: 8px; color: var(--text2); white-space: nowrap; }
+    #legend-specials { display: flex; gap: 10px; align-items: center; margin-left: 4px; }
+    .sp-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text2); }
+    .sp-box { width: 13px; height: 11px; border-radius: 2px; flex-shrink: 0; }
+
+    #time-row { display: flex; align-items: center; gap: 10px; }
+    #play-btn {
+      width: 28px; height: 28px; border-radius: 50%;
+      border: 0.5px solid var(--border2); background: var(--bg);
+      cursor: pointer; font-size: 10px; color: var(--text);
+      flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    }
+    #play-btn:hover { background: var(--bg2); }
+    #time-slider { flex: 1; }
+    #date-lbl { font-size: 12px; color: var(--text2); min-width: 84px; text-align: right; flex-shrink: 0; }
+
+    #status-bar {
+      font-size: 11px; color: var(--text2);
+      padding: 4px 14px; border-top: 0.5px solid var(--border);
+      min-height: 22px; background: var(--bg);
+    }
+
+    #slider-wrap { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+    #slider-labels { display: flex; justify-content: space-between; align-items: baseline; padding: 0 2px; }
+    #date-start, #date-end { font-size: 10px; color: var(--text3); }
+    #date-current {
+      font-size: 14px; font-weight: 600; color: var(--text);
+      letter-spacing: -0.02em; text-align: center;
+    }
+    #spark-meta {
+      display: flex; justify-content: space-between; align-items: baseline;
+      margin-bottom: 4px; min-height: 16px;
+    }
+    #spark-date-lbl { font-size: 11px; font-weight: 500; color: var(--text); }
+    #spark-val-lbl  { font-size: 11px; color: var(--text2); }
+    #spark-hint { font-size: 10px; color: var(--text3); margin-top: 3px; text-align: center; }
+    #spark-svg { cursor: crosshair; }
+
+    /* Singapore point marker */
+    .sgp-dot { cursor: pointer; }
+    .sgp-dot:hover circle { r: 5; }
+    .sgp-label { font-size: 9px; fill: var(--text); pointer-events: none; }
+  </style>
+</head>
+<body>
+
+<h1>
+  Covid-19 Global Map <span>Weekly new reported cases &amp; deaths · 2020–2026</span>
+  <button id="theme-btn" title="Toggle light / dark mode" onclick="toggleTheme()">
+    <div class="theme-track">
+      <span class="theme-icon-sun">☀</span>
+      <span class="theme-icon-moon">⏾</span>
+      <div class="theme-thumb"></div>
+    </div>
+  </button>
+</h1>
+
+<div id="app">
+  <div id="sidebar">
+    <div id="sb-head">
+      <div id="sb-label">Filter countries</div>
+      <input id="country-search" type="text" placeholder="Search country…" />
+    </div>
+    <div id="continent-list"></div>
+    <div id="sb-foot">
+      <span id="filter-status">All countries</span>
+      <button id="clear-btn">Clear</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="ctrl-bar">
+      <div class="ctrl-group">
+        <div class="ctrl-lbl">Metric</div>
+        <div class="tog" id="metric-tog">
+          <button class="tog-btn" data-v="cases">Cases</button>
+          <button class="tog-btn on" data-v="deaths">Deaths</button>
+        </div>
+      </div>
+      <div class="ctrl-group">
+        <div class="ctrl-lbl">Scale</div>
+        <div class="tog" id="scale-tog">
+          <button class="tog-btn on" data-v="norm">Per 100k</button>
+          <button class="tog-btn" data-v="raw">Raw count</button>
+        </div>
+      </div>
+      <div id="map-subtitle"></div>
+    </div>
+
+    <div id="map-wrap">
+      <svg id="map-svg"></svg>
+      <div id="tt">
+        <div class="tt-name" id="tt-name"></div>
+        <div class="tt-row"><span>Date</span><span class="tt-v" id="tt-date"></span></div>
+        <div class="tt-row tt-pop-row"><span>Population</span><span class="tt-v" id="tt-pop"></span></div>
+        <div class="tt-div"></div>
+        <div class="tt-row"><span>Cases (raw)</span><span class="tt-v" id="tt-nc"></span></div>
+        <div class="tt-row"><span>Cases / 100k</span><span class="tt-v" id="tt-ncn"></span></div>
+        <div class="tt-div"></div>
+        <div class="tt-row"><span>Deaths (raw)</span><span class="tt-v" id="tt-nd"></span></div>
+        <div class="tt-row"><span>Deaths / 100k</span><span class="tt-v" id="tt-ndn"></span></div>
+      </div>
+      <div id="spark-panel">
+        <button id="spark-close">✕</button>
+        <div id="spark-title"></div>
+        <div id="spark-meta">
+          <span id="spark-date-lbl"></span>
+          <span id="spark-val-lbl"></span>
+        </div>
+        <svg id="spark-svg"></svg>
+        <div id="spark-msg"></div>
+        <div id="spark-hint">click line to jump to date</div>
+      </div>
+    </div>
+
+    <div id="bottom">
+      <div id="legend-row">
+        <div id="legend-title"></div>
+        <div id="legend-swatches"></div>
+        <div id="legend-specials">
+          <div class="sp-item"><div class="sp-box" style="background:#E5E7EB"></div>Zero</div>
+          <div class="sp-item">
+            <div class="sp-box" style="background:repeating-linear-gradient(45deg,#CBD5E1 0,#CBD5E1 2px,transparent 2px,transparent 5px);border:.5px solid #CBD5E1"></div>
+            No data
+          </div>
+        </div>
+      </div>
+      <div id="time-row">
+        <button id="play-btn">▶</button>
+        <div id="slider-wrap">
+          <input type="range" id="time-slider" min="0" value="0" step="1" />
+          <div id="slider-labels">
+            <span id="date-start">—</span>
+            <span id="date-current">—</span>
+            <span id="date-end">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="status-bar">Loading…</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // ── Config ───────────────────────────────────────────────────────────────
+  const DATA_URL      = 'data.json';
+  const COUNTRIES_URL = 'countries.json';
+  const TOPO_URL      = 'world.topojson';
+  // Default date shown on load. Set to null to start at the most recent date.
+  const DEFAULT_DATE  = '2021-01-17';
+
+  // ── Color ramps ──────────────────────────────────────────────────────────
+  const DR  = ['#FCEBEB','#F7C1C1','#F09595','#E24B4A','#A32D2D','#791F1F','#501313'];
+  const DRN = ['#FAECE7','#F5C4B3','#F0997B','#E07050','#D85A30','#993C1D','#4A1B0C'];
+  const CR  = ['#E6F1FB','#B5D4F4','#85B7EB','#378ADD','#185FA5','#0C447C','#042C53'];
+  const CRN = ['#EFF6FF','#BFDBFE','#93C5FD','#60A5FA','#2563EB','#1D4ED8','#1E3A8A'];
+  const C_ZERO = '#E5E7EB';
+
+  // Singapore coords (too small for 110m polygons)
+  const SGP_COORD = [103.8198, 1.3521];
+
+  let covidData = null, countriesMeta = null, worldTopo = null;
+  let allDates = [], allISOs = [];
+  let selectedISOs = new Set();
+  let metric = 'deaths', scale = 'norm';
+  let dateIdx = 0, bins = null;
+  let playing = false, playTimer = null, clickedISO = null;
+  let proj, pathGen, zoomBeh;
+
+  const svg      = d3.select('#map-svg');
+  const mapWrap  = document.getElementById('map-wrap');
+  const tt       = document.getElementById('tt');
+  const slider   = document.getElementById('time-slider');
+  const dateCurrentEl = document.getElementById('date-current');
+  const dateStartEl  = document.getElementById('date-start');
+  const dateEndEl    = document.getElementById('date-end');
+  const playBtn  = document.getElementById('play-btn');
+  const sparkPanel = document.getElementById('spark-panel');
+  const sparkTitleEl = document.getElementById('spark-title');
+  const sparkSvgEl   = d3.select('#spark-svg');
+  const statusBar = document.getElementById('status-bar');
+
+  function setStatus(s) { statusBar.textContent = s; }
+  function getRamp() { return metric === 'deaths' ? (scale === 'raw' ? DR : DRN) : (scale === 'raw' ? CR : CRN); }
+  function getField() { return metric === 'deaths' ? (scale === 'raw' ? 'nd' : 'ndn') : (scale === 'raw' ? 'nc' : 'ncn'); }
+
+  function getEntry(iso, date) {
+    if (!covidData || !covidData[iso] || !covidData[iso][date]) return null;
+    const r = covidData[iso][date];
+    if (Array.isArray(r)) return { nc: r[0], nd: r[1], ncn: r[2], ndn: r[3] };
+    return { nc: r.nc, nd: r.nd, ncn: r.nc_norm, ndn: r.nd_norm };
+  }
+
+  function isoFromProps(p) {
+    // ISO_A3 is -99 for France, Norway, Kosovo etc. Fall back to ISO_A3_EH then ADM0_A3
+    if (!p) return null;
+    const a3 = p.ISO_A3;
+    if (a3 && a3 !== '-99') return a3;
+    const eh = p.ISO_A3_EH;
+    if (eh && eh !== '-99') return eh;
+    const adm = p.ADM0_A3;
+    if (adm && adm !== '-99') return adm;
+    return null;
+  }
+
+  function countryName(iso) {
+    return (countriesMeta && countriesMeta[iso]) ? countriesMeta[iso].name : iso;
+  }
+  function countryContinent(iso) {
+    return (countriesMeta && countriesMeta[iso]) ? countriesMeta[iso].continent : 'Other';
+  }
+  function countryPop(iso) {
+    return (countriesMeta && countriesMeta[iso]) ? countriesMeta[iso].population : null;
+  }
+  function fmtPop(v) {
+    if (v == null) return '—';
+    if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return (v / 1e3).toFixed(0) + 'k';
+    return v.toLocaleString();
+  }
+
+  // ── Binning algorithms ───────────────────────────────────────────────────
+  function logQuant(sorted, n) {
+    // Log-interpolated breaks: evenly spaced on log scale between
+    // global data min and max. All n bins are utilised at every date,
+    // maximising discriminative power across the actual data range.
+    // Thresholds are fixed globally (computed once across all dates),
+    // so colour meaning is temporally consistent.
+    const min = sorted[0], max = sorted[sorted.length - 1];
+    if (min <= 0 || max <= 0) {
+      const th = [];
+      for (let i = 1; i < n; i++) th.push(sorted[Math.floor(i / n * sorted.length)]);
+      return th;
+    }
+    const logMin = Math.log10(Math.max(1, min));
+    const logMax = Math.log10(max);
+    const th = [];
+    for (let i = 1; i < n; i++) {
+      th.push(Math.pow(10, logMin + (logMax - logMin) * (i / n)));
+    }
+    return th;
+  }
+
+  function jenks(sorted, k) {
+    const n = sorted.length;
+    if (n <= k) return sorted.slice(0, -1);
+    const N = Math.min(n, 600), st = Math.max(1, Math.floor(n / N));
+    const s = sorted.filter((_, i) => i % st === 0), S = s.length;
+    const lc = Array.from({ length: S + 1 }, () => new Float64Array(k + 1));
+    const vc = Array.from({ length: S + 1 }, () => new Float64Array(k + 1).fill(Infinity));
+    for (let c = 1; c <= k; c++) { lc[1][c] = 1; vc[1][c] = 0; }
+    for (let j = 2; j <= S; j++) vc[j][1] = vari(s, 0, j - 1);
+    for (let i = 2; i <= S; i++) for (let c = 2; c <= k; c++) {
+      let best = Infinity, bm = 1;
+      for (let m = 1; m < i; m++) { const v = vc[m][c - 1] + vari(s, m, i - 1); if (v < best) { best = v; bm = m; } }
+      vc[i][c] = best; lc[i][c] = bm;
+    }
+    const brk = []; let kk = k, jj = S;
+    while (kk > 1) { const m = lc[jj][kk]; brk.unshift(s[m]); jj = m; kk--; }
+    return brk.slice(0, k - 1);
+  }
+
+  function vari(a, lo, hi) { let s = 0, s2 = 0, n = hi - lo + 1; for (let i = lo; i <= hi; i++) { s += a[i]; s2 += a[i] * a[i]; } return s2 - s * s / n; }
+
+  function computeBins() {
+    const field = getField();
+    const keyMap = { nc: 'nc', nd: 'nd', ncn: 'nc_norm', ndn: 'nd_norm' };
+    const vals = [];
+    for (const iso in covidData) for (const d in covidData[iso]) {
+      const e = getEntry(iso, d);
+      const v = e ? e[field] : null;
+      if (v != null && v > 0) vals.push(v);
+    }
+    vals.sort((a, b) => a - b);
+    const ramp = getRamp();
+    const th = scale === 'raw' ? logQuant(vals, ramp.length) : jenks(vals, ramp.length);
+    bins = { thresholds: th, ramp };
+  }
+
+  // ── Color helpers ────────────────────────────────────────────────────────
+  function colorFor(v, iso) {
+    const dimmed = selectedISOs.size > 0 && !selectedISOs.has(iso);
+    if (v === null || v === undefined) return null;
+    if (v === 0) return dimmed ? '#F3F4F6' : C_ZERO;
+    if (!bins) return C_ZERO;
+    let idx = 0;
+    for (let i = 0; i < bins.thresholds.length; i++) { if (v >= bins.thresholds[i]) idx = i + 1; }
+    const c = bins.ramp[Math.min(idx, bins.ramp.length - 1)];
+    return dimmed ? fadeHex(c, 0.58) : c;
+  }
+
+  function fadeHex(hex, amt) {
+    const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    return `rgb(${Math.round(r + (255 - r) * amt)},${Math.round(g + (255 - g) * amt)},${Math.round(b + (255 - b) * amt)})`;
+  }
+
+  function strokeFor(iso) {
+    if (iso === clickedISO) return '#111';
+    return selectedISOs.size === 0 || selectedISOs.has(iso) ? 'rgba(40,40,40,0.55)' : 'rgba(160,160,160,0.25)';
+  }
+
+  // ── Map setup ────────────────────────────────────────────────────────────
+  function setupProj() {
+    const w = mapWrap.offsetWidth || 800, h = mapWrap.offsetHeight || 400;
+    proj = d3.geoNaturalEarth1().fitSize([w, h], { type: 'Sphere' }).precision(0.1);
+    pathGen = d3.geoPath().projection(proj);
+  }
+
+  function setupHatch() {
+    svg.select('defs').remove();
+    const defs = svg.append('defs');
+    const pat = defs.append('pattern').attr('id', 'hatch').attr('patternUnits', 'userSpaceOnUse').attr('width', 5).attr('height', 5).attr('patternTransform', 'rotate(45)');
+    pat.append('line').attr('x1', 0).attr('y1', 0).attr('x2', 0).attr('y2', 5).attr('stroke', '#CBD5E1').attr('stroke-width', 1.5);
+  }
+
+  function drawMap() {
+    const w = mapWrap.offsetWidth || 800, h = mapWrap.offsetHeight || 400;
+    svg.attr('viewBox', `0 0 ${w} ${h}`);
+    setupHatch();
+    svg.selectAll('g.zg').remove();
+    const g = svg.append('g').attr('class', 'zg');
+
+    // Ocean
+    g.append('path').datum({ type: 'Sphere' }).attr('d', pathGen).attr('stroke', 'none').attr('class','ocean-bg');
+
+    // Country polygons — join via properties.ISO_A3
+    const countries = topojson.feature(worldTopo, worldTopo.objects.countries);
+    g.selectAll('.cpath').data(countries.features).join('path')
+      .attr('class', 'cpath')
+      .attr('d', pathGen)
+      .attr('fill', 'url(#hatch)')
+      .attr('stroke', d => strokeFor(isoFromProps(d.properties)))
+      .attr('stroke-width', d => isoFromProps(d.properties) === clickedISO ? 2 : 0.35)
+      .on('mousemove', onHover)
+      .on('mouseleave', () => tt.style.display = 'none')
+      .on('click', onClick);
+
+    // Singapore point marker (too small for 110m polygons)
+    const sgpPx = proj(SGP_COORD);
+    if (sgpPx) {
+      const sgpG = g.append('g').attr('class', 'sgp-dot').attr('transform', `translate(${sgpPx[0]},${sgpPx[1]})`);
+      sgpG.append('circle').attr('r', 3.5).attr('fill', 'url(#hatch)').attr('stroke', 'rgba(40,40,40,0.55)').attr('stroke-width', 0.6).attr('data-iso', 'SGP');
+      sgpG.on('mousemove', (event) => onHoverISO(event, 'SGP'))
+          .on('mouseleave', () => tt.style.display = 'none')
+          .on('click', (event) => { event.stopPropagation(); toggleClick('SGP'); });
+    }
+
+    zoomBeh = d3.zoom().scaleExtent([1, 12]).on('zoom', e => g.attr('transform', e.transform));
+    svg.call(zoomBeh);
+    svg.on('click.bg', () => { clickedISO = null; renderColors(); sparkPanel.style.display = 'none'; });
+    renderColors();
+  }
+
+  // Transition duration in ms. Shorter when scrubbing manually (instant feel),
+  // longer when playing (smooth animation). Set via renderColors(dur).
+  function renderColors(dur) {
+    const date = allDates[dateIdx] || '';
+    const field = getField();
+    const ms = (dur === undefined) ? 80 : dur;
+
+    svg.selectAll('.cpath').each(function (d) {
+      const iso = isoFromProps(d.properties);
+      const entry = iso ? getEntry(iso, date) : null;
+      const v = entry ? entry[field] : null;
+      const fill = colorFor(v, iso);
+      const el = d3.select(this);
+      // Stroke updates are always instant (structural, not data)
+      el.attr('stroke', strokeFor(iso))
+        .attr('stroke-width', iso === clickedISO ? 2 : 0.35);
+      if (fill === null) {
+        // No transition possible to/from svg pattern reference
+        el.attr('fill', 'url(#hatch)');
+      } else {
+        el.transition().duration(ms).ease(d3.easeCubicOut)
+          .attr('fill', fill);
+      }
+    });
+
+    // SGP point
+    const sgpEntry = getEntry('SGP', date);
+    const sgpV = sgpEntry ? sgpEntry[field] : null;
+    const sgpFill = colorFor(sgpV, 'SGP');
+    const sgpEl = svg.select('.sgp-dot circle');
+    sgpEl.attr('stroke', strokeFor('SGP'))
+         .attr('stroke-width', 'SGP' === clickedISO ? 2 : 0.6);
+    if (sgpFill === null) {
+      sgpEl.attr('fill', 'url(#hatch)');
+    } else {
+      sgpEl.transition().duration(ms).ease(d3.easeCubicOut)
+           .attr('fill', sgpFill);
+    }
+  }
+
+  // ── Tooltip ──────────────────────────────────────────────────────────────
+  function fmt(v) { return v == null ? '—' : v.toLocaleString(); }
+  function fmtN(v) { return v == null ? '—' : v.toFixed(2); }
+
+  function showTooltip(event, iso) {
+    const date = allDates[dateIdx] || '';
+    const r = getEntry(iso, date);
+    document.getElementById('tt-name').textContent = countryName(iso);
+    document.getElementById('tt-date').textContent = date;
+    document.getElementById('tt-pop').textContent  = fmtPop(countryPop(iso));
+    document.getElementById('tt-nc').textContent  = r ? fmt(r.nc)   : '—';
+    document.getElementById('tt-ncn').textContent = r ? fmtN(r.ncn) : '—';
+    document.getElementById('tt-nd').textContent  = r ? fmt(r.nd)   : '—';
+    document.getElementById('tt-ndn').textContent = r ? fmtN(r.ndn) : '—';
+    positionTooltip(event);
+    tt.style.display = 'block';
+  }
+
+  function positionTooltip(event) {
+    const rect = mapWrap.getBoundingClientRect();
+    let x = event.clientX - rect.left + 14, y = event.clientY - rect.top + 14;
+    if (x + 215 > rect.width) x = event.clientX - rect.left - 215;
+    if (y + 170 > rect.height) y = event.clientY - rect.top - 170;
+    tt.style.left = x + 'px'; tt.style.top = y + 'px';
+  }
+
+  function onHover(event, d) { showTooltip(event, isoFromProps(d.properties)); }
+  function onHoverISO(event, iso) { showTooltip(event, iso); }
+
+  function onClick(event, d) { event.stopPropagation(); toggleClick(isoFromProps(d.properties)); }
+
+  function toggleClick(iso) {
+    clickedISO = clickedISO === iso ? null : iso;
+    renderColors();
+    if (clickedISO) drawSparkline(clickedISO);
+    else sparkPanel.style.display = 'none';
+  }
+
+  // ── Sparkline ────────────────────────────────────────────────────────────
+  let sparkISO = null, sparkX = null, sparkY = null, sparkPts = null;
+
+  function updateSparkCursor() {
+    if (!sparkISO || !sparkPts || !sparkX || !sparkY) return;
+    const ramp = getRamp();
+    const cur = sparkPts.find(p => p.i === dateIdx);
+    sparkSvgEl.select('.spark-cursor').remove();
+    sparkSvgEl.select('.spark-cursor-line').remove();
+    const dateLblEl  = document.getElementById('spark-date-lbl');
+    const valLblEl   = document.getElementById('spark-val-lbl');
+    const field = getField();
+    const unit = scale === 'norm' ? ' /100k' : '';
+    const metricLabel = metric === 'deaths' ? 'deaths' : 'cases';
+    if (cur) {
+      const cx = sparkX(cur.i), cy = sparkY(cur.v);
+      // Vertical cursor line
+      sparkSvgEl.insert('line', '.spark-line')
+        .attr('class', 'spark-cursor-line')
+        .attr('x1', cx).attr('y1', 0).attr('x2', cx).attr('y2', 78)
+        .attr('stroke', 'var(--text3)').attr('stroke-width', 0.8).attr('stroke-dasharray', '3,2');
+      // Dot
+      sparkSvgEl.append('circle').attr('class', 'spark-cursor')
+        .attr('cx', cx).attr('cy', cy).attr('r', 4)
+        .attr('fill', ramp[ramp.length - 1]).attr('stroke', 'var(--bg)').attr('stroke-width', 1.5);
+      dateLblEl.textContent  = allDates[dateIdx] || '';
+      valLblEl.textContent   = (cur.v != null ? (scale === 'norm' ? cur.v.toFixed(2) : cur.v.toLocaleString()) : '—') + unit;
+    } else {
+      dateLblEl.textContent = allDates[dateIdx] || '';
+      valLblEl.textContent  = '— ' + metricLabel + unit;
+    }
+  }
+
+  function drawSparkline(iso) {
+    sparkISO = iso;
+    sparkTitleEl.textContent = countryName(iso);
+    sparkPanel.style.display = 'block';
+    sparkSvgEl.selectAll('*').remove();
+    document.getElementById('spark-msg').textContent = '';
+    document.getElementById('spark-hint').style.display = '';
+    if (!covidData[iso]) { document.getElementById('spark-msg').textContent = 'No data.'; return; }
+    const field = getField();
+    // Build pts with ALL dates (null = gap), filtered to non-null for line
+    const allPts = allDates.map((d, i) => {
+      const e = getEntry(iso, d);
+      return { i, d, v: e ? e[field] : null };
+    });
+    sparkPts = allPts.filter(p => p.v != null && p.v > 0);
+    if (!sparkPts.length) { document.getElementById('spark-msg').textContent = 'No data for this metric.'; return; }
+    const W = 182, H = 78;
+    sparkSvgEl.attr('viewBox', `0 0 ${W} ${H}`);
+    sparkX = d3.scaleLinear().domain([0, allDates.length - 1]).range([2, W - 2]);
+    sparkY = d3.scaleLinear().domain([0, d3.max(sparkPts, p => p.v)]).range([H - 4, 4]);
+    const ramp = getRamp();
+
+    // Area fill under line
+    const area = d3.area().x(p => sparkX(p.i)).y0(H).y1(p => sparkY(p.v)).curve(d3.curveMonotoneX).defined(p => p.v != null && p.v > 0);
+    sparkSvgEl.append('path').datum(sparkPts).attr('class', 'spark-area')
+      .attr('d', area).attr('fill', ramp[1]).attr('opacity', 0.25);
+
+    // Line
+    const line = d3.line().x(p => sparkX(p.i)).y(p => sparkY(p.v)).curve(d3.curveMonotoneX).defined(p => p.v != null && p.v > 0);
+    sparkSvgEl.append('path').datum(sparkPts).attr('class', 'spark-line')
+      .attr('d', line).attr('fill', 'none').attr('stroke', ramp[ramp.length - 2]).attr('stroke-width', 1.8);
+
+    // Peak annotation
+    const peak = sparkPts.reduce((a, b) => b.v > a.v ? b : a);
+    const px = sparkX(peak.i), py = sparkY(peak.v);
+    const labelLeft = px > W * 0.6;
+    sparkSvgEl.append('circle').attr('cx', px).attr('cy', py).attr('r', 2.5).attr('fill', ramp[ramp.length - 1]).attr('opacity', 0.7);
+    sparkSvgEl.append('text')
+      .attr('x', labelLeft ? px - 4 : px + 4).attr('y', Math.max(py - 4, 8))
+      .attr('text-anchor', labelLeft ? 'end' : 'start')
+      .attr('font-size', 8).attr('fill', 'var(--text2)')
+      .text('peak: ' + (scale === 'norm' ? peak.v.toFixed(1) : peak.v.toLocaleString()));
+
+    // Interactive hover overlay
+    sparkSvgEl.append('rect').attr('class', 'spark-overlay')
+      .attr('x', 0).attr('y', 0).attr('width', W).attr('height', H)
+      .attr('fill', 'transparent')
+      .on('mousemove', function(event) {
+        const [mx] = d3.pointer(event, this);
+        const hovIdx = Math.round(sparkX.invert(mx));
+        const clamped = Math.max(0, Math.min(allDates.length - 1, hovIdx));
+        // Find nearest non-null pt
+        const nearest = sparkPts.reduce((best, p) => Math.abs(p.i - clamped) < Math.abs(best.i - clamped) ? p : best, sparkPts[0]);
+        const dateLblEl = document.getElementById('spark-date-lbl');
+        const valLblEl  = document.getElementById('spark-val-lbl');
+        const unit = scale === 'norm' ? ' /100k' : '';
+        sparkSvgEl.select('.spark-cursor').remove();
+        sparkSvgEl.select('.spark-cursor-line').remove();
+        const cx = sparkX(nearest.i), cy = sparkY(nearest.v);
+        sparkSvgEl.insert('line', '.spark-line')
+          .attr('class', 'spark-cursor-line')
+          .attr('x1', cx).attr('y1', 0).attr('x2', cx).attr('y2', H)
+          .attr('stroke', 'var(--text3)').attr('stroke-width', 0.8).attr('stroke-dasharray', '3,2');
+        sparkSvgEl.append('circle').attr('class', 'spark-cursor')
+          .attr('cx', cx).attr('cy', cy).attr('r', 4)
+          .attr('fill', ramp[ramp.length - 1]).attr('stroke', 'var(--bg)').attr('stroke-width', 1.5);
+        dateLblEl.textContent = nearest.d;
+        valLblEl.textContent  = (scale === 'norm' ? nearest.v.toFixed(2) : nearest.v.toLocaleString()) + unit;
+      })
+      .on('mouseleave', () => updateSparkCursor())
+      .on('click', function(event) {
+        const [mx] = d3.pointer(event, this);
+        const hovIdx = Math.round(sparkX.invert(mx));
+        const clamped = Math.max(0, Math.min(allDates.length - 1, hovIdx));
+        const nearest = sparkPts.reduce((best, p) => Math.abs(p.i - clamped) < Math.abs(best.i - clamped) ? p : best, sparkPts[0]);
+        dateIdx = nearest.i;
+        slider.value = dateIdx;
+        dateCurrentEl.textContent = allDates[dateIdx] || '—';
+        renderColors();
+        updateSparkCursor();
+      });
+
+    updateSparkCursor();
+  }
+
+  // ── Legend ───────────────────────────────────────────────────────────────
+  function fmtT(v) {
+    if (v == null) return '';
+    if (scale === 'norm') return v < 1 ? v.toFixed(2) : v.toFixed(1);
+    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return Math.round(v / 1e3) + 'k';
+    return Math.round(v).toString();
+  }
+
+  function updateLegend() {
+    if (!bins) return;
+    const { thresholds: th, ramp } = bins;
+    const mLabel = metric === 'deaths' ? 'deaths' : 'cases';
+    const sLabel = scale === 'norm' ? 'per 100k pop.' : 'raw count';
+    document.getElementById('legend-title').textContent = `Weekly new ${mLabel} · ${sLabel}`;
+    document.getElementById('map-subtitle').textContent = (metric === 'deaths' ? 'Deaths' : 'Cases') + ' · ' + (scale === 'norm' ? 'per 100k' : 'raw count');
+    const con = document.getElementById('legend-swatches');
+    con.innerHTML = '';
+    ramp.forEach((c, i) => {
+      const lo = i === 0 ? null : th[i - 1], hi = th[i];
+      const lbl = i === 0 ? `<${fmtT(hi)}` : i === ramp.length - 1 ? `>${fmtT(lo)}` : `${fmtT(lo)}–${fmtT(hi)}`;
+      const sw = document.createElement('div'); sw.className = 'sw';
+      sw.innerHTML = `<div class="sw-rect" style="background:${c}"></div><div class="sw-lbl">${lbl}</div>`;
+      con.appendChild(sw);
+    });
+  }
+
+  // ── Sidebar ──────────────────────────────────────────────────────────────
+  function buildSidebar() {
+    const byC = {};
+    allISOs.forEach(iso => {
+      const c = countryContinent(iso);
+      if (!byC[c]) byC[c] = [];
+      byC[c].push(iso);
+    });
+    const con = document.getElementById('continent-list');
+    con.innerHTML = '';
+    Object.keys(byC).sort().forEach(cont => {
+      const isos = byC[cont].sort((a, b) => countryName(a).localeCompare(countryName(b)));
+      const sec = document.createElement('div'); sec.className = 'cont-section';
+      const hdr = document.createElement('div'); hdr.className = 'cont-hdr';
+      const ccb = document.createElement('input'); ccb.type = 'checkbox'; ccb.className = 'cont-cb'; ccb.dataset.cont = cont;
+      const cname = document.createElement('span'); cname.className = 'cont-name'; cname.textContent = cont;
+      const arr = document.createElement('span'); arr.className = 'cont-arrow'; arr.textContent = '▾';
+      hdr.appendChild(ccb); hdr.appendChild(cname); hdr.appendChild(arr);
+      const list = document.createElement('div'); list.className = 'country-list';
+      let open = false;
+      [cname, arr].forEach(el => el.addEventListener('click', () => {
+        open = !open; list.classList.toggle('open', open); arr.textContent = open ? '▴' : '▾';
+      }));
+      ccb.addEventListener('change', () => {
+        isos.forEach(iso => {
+          if (ccb.checked) selectedISOs.add(iso); else selectedISOs.delete(iso);
+          const cb = document.getElementById('cb-' + iso); if (cb) cb.checked = ccb.checked;
+        });
+        syncContCb(cont); updateFilter();
+      });
+      isos.forEach(iso => {
+        const item = document.createElement('div'); item.className = 'country-item';
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = 'cb-' + iso;
+        const lbl = document.createElement('label'); lbl.htmlFor = 'cb-' + iso; lbl.textContent = countryName(iso);
+        item.appendChild(cb); item.appendChild(lbl);
+        cb.addEventListener('change', () => {
+          if (cb.checked) selectedISOs.add(iso); else selectedISOs.delete(iso);
+          syncContCb(cont); updateFilter();
+        });
+        list.appendChild(item);
+      });
+      sec.appendChild(hdr); sec.appendChild(list); con.appendChild(sec);
+    });
+  }
+
+  function syncContCb(cont) {
+    const ccb = document.querySelector(`.cont-cb[data-cont="${cont}"]`); if (!ccb) return;
+    const isos = allISOs.filter(i => countryContinent(i) === cont);
+    const all = isos.every(i => selectedISOs.has(i)), none = isos.every(i => !selectedISOs.has(i));
+    ccb.checked = all; ccb.indeterminate = !all && !none;
+  }
+
+  function updateFilter() {
+    const n = selectedISOs.size;
+    document.getElementById('filter-status').textContent = n > 0 ? `${n} selected` : 'All countries';
+    renderColors();
+  }
+
+  document.getElementById('clear-btn').addEventListener('click', () => {
+    selectedISOs.clear();
+    document.querySelectorAll('.country-item input[type=checkbox]').forEach(cb => cb.checked = false);
+    document.querySelectorAll('.cont-cb').forEach(cb => { cb.checked = false; cb.indeterminate = false; });
+    updateFilter();
+  });
+
+  document.getElementById('country-search').addEventListener('input', function () {
+    const q = this.value.toLowerCase();
+    document.querySelectorAll('.country-item').forEach(item => {
+      item.style.display = item.querySelector('label').textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+    document.querySelectorAll('.cont-section').forEach(sec => {
+      const list = sec.querySelector('.country-list');
+      const vis = [...list.querySelectorAll('.country-item')].some(i => i.style.display !== 'none');
+      sec.style.display = vis ? '' : 'none';
+      if (q && vis) { list.classList.add('open'); sec.querySelector('.cont-arrow').textContent = '▴'; }
+    });
+  });
+
+  // ── Toggles ──────────────────────────────────────────────────────────────
+  document.querySelectorAll('#metric-tog .tog-btn').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('#metric-tog .tog-btn').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on'); metric = btn.dataset.v;
+    computeBins(); renderColors(); updateLegend();
+    if (clickedISO) drawSparkline(clickedISO);  // full redraw since field changed
+  }));
+  document.querySelectorAll('#scale-tog .tog-btn').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('#scale-tog .tog-btn').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on'); scale = btn.dataset.v;
+    computeBins(); renderColors(); updateLegend();
+    if (clickedISO) drawSparkline(clickedISO);  // full redraw since field changed
+  }));
+
+  // ── Time slider & play ───────────────────────────────────────────────────
+  slider.addEventListener('input', () => {
+    dateIdx = +slider.value; dateCurrentEl.textContent = allDates[dateIdx] || '—';
+    renderColors(40); if (clickedISO) { updateSparkCursor(); }
+  });
+
+  playBtn.addEventListener('click', () => {
+    playing = !playing; playBtn.textContent = playing ? '⏸' : '▶';
+    if (playing) {
+      playTimer = setInterval(() => {
+        dateIdx = dateIdx >= allDates.length - 1 ? 0 : dateIdx + 1;
+        slider.value = dateIdx; dateCurrentEl.textContent = allDates[dateIdx] || '—';
+        renderColors(100); if (clickedISO) { updateSparkCursor(); }
+      }, 130);
+    } else clearInterval(playTimer);
+  });
+
+  document.getElementById('spark-close').addEventListener('click', e => {
+    e.stopPropagation(); clickedISO = null; renderColors(); sparkPanel.style.display = 'none';
+  });
+
+  // ── Init ─────────────────────────────────────────────────────────────────
+  async function init() {
+    setStatus('Loading world map…');
+    try { worldTopo = await d3.json(TOPO_URL); } catch { setStatus('Failed to load ' + TOPO_URL); return; }
+
+    setStatus('Loading country metadata…');
+    try { countriesMeta = await d3.json(COUNTRIES_URL); } catch { countriesMeta = {}; }
+
+    setStatus('Loading Covid data…');
+    try { covidData = await d3.json(DATA_URL); } catch { setStatus('Failed to load ' + DATA_URL + ' — serve files from a local server.'); return; }
+
+    allDates = [...new Set(Object.values(covidData).flatMap(d => Object.keys(d)))].sort();
+    allISOs  = Object.keys(covidData);
+    const defaultIdx = DEFAULT_DATE ? allDates.indexOf(DEFAULT_DATE) : -1;
+    dateIdx = defaultIdx >= 0 ? defaultIdx : Math.max(0, allDates.length - 1);
+    slider.max = allDates.length - 1;
+    slider.value = dateIdx;
+    dateCurrentEl.textContent = allDates[dateIdx]              || '—';
+    dateStartEl.textContent   = allDates[0]                    || '—';
+    dateEndEl.textContent     = allDates[allDates.length - 1]  || '—';
+
+    setStatus('Computing color bins…');
+    computeBins();
+    setupProj();
+    drawMap();
+    buildSidebar();
+    updateLegend();
+    updateFilter();
+    setStatus(`${allISOs.length} countries · ${allDates.length} weeks · scroll to zoom · click country for sparkline`);
+  }
+
+  window.addEventListener('resize', () => {
+    setupProj();
+    const w = mapWrap.offsetWidth, h = mapWrap.offsetHeight;
+    svg.attr('viewBox', `0 0 ${w} ${h}`);
+    svg.selectAll('.cpath').attr('d', pathGen);
+    const sgpPx = proj(SGP_COORD);
+    if (sgpPx) svg.select('.sgp-dot').attr('transform', `translate(${sgpPx[0]},${sgpPx[1]})`);
+  });
+
+  init();
+
+})();
+
+// Theme toggle — outside IIFE so onclick="" can reach it
+function toggleTheme() {
+  const root = document.documentElement;
+  const isDark = root.classList.contains('dark') ||
+    (!root.classList.contains('light') &&
+     window.matchMedia('(prefers-color-scheme: dark)').matches);
+  if (isDark) {
+    root.classList.remove('dark'); root.classList.add('light');
+  } else {
+    root.classList.remove('light'); root.classList.add('dark');
+  }
+}
+</script>
+</body>
+</html>
