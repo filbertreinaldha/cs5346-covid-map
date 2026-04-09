@@ -6,6 +6,7 @@
   <title>Covid-19 Global Map</title>
 
   <!-- D3 and TopoJSON -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
 
@@ -300,8 +301,8 @@
   Covid-19 Global Map <span>Weekly new reported cases &amp; deaths · 2020–2026</span>
   <button id="theme-btn" title="Toggle light / dark mode" onclick="toggleTheme()">
     <div class="theme-track">
-      <span class="theme-icon-sun">☀</span>
-      <span class="theme-icon-moon">☾</span>
+      <span class="theme-icon-sun"><i class="fa-solid fa-sun"></i></span>
+      <span class="theme-icon-moon"><i class="fa-solid fa-moon"></i></span>
       <div class="theme-thumb"></div>
     </div>
   </button>
@@ -984,6 +985,7 @@
     setupProj();
     const w = mapWrap.offsetWidth, h = mapWrap.offsetHeight;
     svg.attr('viewBox', `0 0 ${w} ${h}`);
+    svg.select('.ocean-bg').attr('d', pathGen({type: 'Sphere'}));
     svg.selectAll('.cpath').attr('d', pathGen);
     const sgpPx = proj(SGP_COORD);
     if (sgpPx) svg.select('.sgp-dot').attr('transform', `translate(${sgpPx[0]},${sgpPx[1]})`);
