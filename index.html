@@ -101,7 +101,7 @@
       font-size: 16px; line-height: 1; z-index: 2;
       transition: color 0.25s ease;
       pointer-events: none; user-select: none;
-      margin-left: 0;
+			margin-left: 0;
     }
     /* Light mode: sun side is active (dark text), moon is muted */
     .theme-icon-sun  { color: var(--text);  }
@@ -417,7 +417,7 @@
   let selectedISOs = new Set();
   let metric = 'deaths', scale = 'norm';
   let dateIdx = 0, bins = null;
-  let playing = false, playTimer = null, clickedISO = null;
+  let playing = false, playTimer = null, clickedISO = null, hoveredISO = null, hoveredEvent = null;
   let proj, pathGen, zoomBeh;
 
   const svg      = d3.select('#map-svg');
@@ -586,7 +586,7 @@
       .attr('stroke', d => strokeFor(isoFromProps(d.properties)))
       .attr('stroke-width', d => isoFromProps(d.properties) === clickedISO ? 2 : 0.35)
       .on('mousemove', onHover)
-      .on('mouseleave', () => tt.style.display = 'none')
+      .on('mouseleave', () => { tt.style.display = 'none'; hoveredISO = null; hoveredEvent = null; })
       .on('click', onClick);
 
     // Singapore point marker (too small for 110m polygons)
@@ -595,7 +595,7 @@
       const sgpG = g.append('g').attr('class', 'sgp-dot').attr('transform', `translate(${sgpPx[0]},${sgpPx[1]})`);
       sgpG.append('circle').attr('r', 3.5).attr('fill', 'url(#hatch)').attr('stroke', 'rgba(40,40,40,0.55)').attr('stroke-width', 0.6).attr('data-iso', 'SGP');
       sgpG.on('mousemove', (event) => onHoverISO(event, 'SGP'))
-          .on('mouseleave', () => tt.style.display = 'none')
+          .on('mouseleave', () => { tt.style.display = 'none'; hoveredISO = null; hoveredEvent = null; })
           .on('click', (event) => { event.stopPropagation(); toggleClick('SGP'); });
     }
 
@@ -671,8 +671,14 @@
     tt.style.left = x + 'px'; tt.style.top = y + 'px';
   }
 
-  function onHover(event, d) { showTooltip(event, isoFromProps(d.properties)); }
-  function onHoverISO(event, iso) { showTooltip(event, iso); }
+  function onHover(event, d) {
+    hoveredISO = isoFromProps(d.properties); hoveredEvent = event;
+    showTooltip(event, hoveredISO);
+  }
+  function onHoverISO(event, iso) {
+    hoveredISO = iso; hoveredEvent = event;
+    showTooltip(event, iso);
+  }
 
   function onClick(event, d) { event.stopPropagation(); toggleClick(isoFromProps(d.properties)); }
 
@@ -932,7 +938,9 @@
       playTimer = setInterval(() => {
         dateIdx = dateIdx >= allDates.length - 1 ? 0 : dateIdx + 1;
         slider.value = dateIdx; dateCurrentEl.textContent = allDates[dateIdx] || '—';
-        renderColors(100); if (clickedISO) { updateSparkCursor(); }
+        renderColors(100);
+        if (clickedISO) updateSparkCursor();
+        if (hoveredISO && hoveredEvent && tt.style.display !== 'none') showTooltip(hoveredEvent, hoveredISO);
       }, 130);
     } else clearInterval(playTimer);
   });
