@@ -1,3 +1,12 @@
+<!--
+	================================================
+	Filbert Reinaldha
+	A0332950H
+	~
+	CS5346 Information Visualization - Assignment 2
+	Covid-19 Choropleth Map	
+	================================================
+	-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -306,7 +315,7 @@
 
 <h1>
   Covid-19 Global Map <span>Weekly new reported cases &amp; deaths · 2020–2026</span>
-  <button id="theme-btn" title="Toggle light / dark mode" onclick="toggleTheme()">
+  <button id="theme-btn" title="Toggle light / dark mode" onclick="toggleTheme()">	<!-- Light/dark mode toggle follows the user's preference -->
     <div class="theme-track">
       <span class="theme-icon-sun"><i class="fa-solid fa-sun"></i></span>
       <span class="theme-icon-moon"><i class="fa-solid fa-moon"></i></span>
@@ -359,7 +368,7 @@
         <div class="tt-div"></div>
         <div class="tt-row"><span>Deaths (raw)</span><span class="tt-v" id="tt-nd"></span></div>
         <div class="tt-row"><span>Deaths / 100k</span><span class="tt-v" id="tt-ndn"></span></div>
-      </div>
+      </div>	<!-- 4 combinations of metric & scale -->
       <div id="spark-panel">
         <button id="spark-close">✕</button>
         <div id="spark-title"></div>
@@ -407,17 +416,19 @@
   const DATA_URL      = 'data.json';
   const COUNTRIES_URL = 'countries.json';
   const TOPO_URL      = 'world.topojson';
-  // Default date shown on load. Set to null to start at the most recent date.
+  
+	// Default date on initialization. Shows interesting distribution of filled bin classes for the default combination of deaths case per 100k population.
   const DEFAULT_DATE  = '2021-01-17';
 
   // ── Color ramps ──────────────────────────────────────────────────────────
+	// Red / orange for deaths, blue for cases, gray for zero, line pattern for no data
   const DR  = ['#FCEBEB','#F7C1C1','#F09595','#E24B4A','#A32D2D','#791F1F','#501313'];
   const DRN = ['#FAECE7','#F5C4B3','#F0997B','#E07050','#D85A30','#993C1D','#4A1B0C'];
   const CR  = ['#E6F1FB','#B5D4F4','#85B7EB','#378ADD','#185FA5','#0C447C','#042C53'];
   const CRN = ['#EFF6FF','#BFDBFE','#93C5FD','#60A5FA','#2563EB','#1D4ED8','#1E3A8A'];
   const C_ZERO = '#E5E7EB';
 
-  // Singapore coords (too small for 110m polygons)
+  // Singapore coords specifically added to make it visible (too small on 110m polygons)
   const SGP_COORD = [103.8198, 1.3521];
 
   let covidData = null, countriesMeta = null, worldTopo = null;
@@ -483,11 +494,13 @@
 
   // ── Binning algorithms ───────────────────────────────────────────────────
   function logQuant(sorted, n) {
-    // Log-interpolated breaks: evenly spaced on log scale between
-    // global data min and max. All n bins are utilised at every date,
-    // maximising discriminative power across the actual data range.
-    // Thresholds are fixed globally (computed once across all dates),
-    // so colour meaning is temporally consistent.
+    /* Log-interpolated breaks: evenly spaced on log scale between
+			 global data min and max. All n bins are utilized at every date,
+			 maximising discriminative power across the actual data range.
+			 Thresholds are fixed globally (computed once across all dates),
+			 so colour meaning is temporally consistent.
+			 Different data will produce different thresholds.
+		*/
     const min = sorted[0], max = sorted[sorted.length - 1];
     if (min <= 0 || max <= 0) {
       const th = [];
@@ -504,6 +517,11 @@
   }
 
   function jenks(sorted, k) {
+		/* To be used for the normalized data.
+			 Thresholds are computed to minimize deviations inside a class,
+			 and maximize the deviation against the mean of other classes.
+			 Aims to achieve better bins utilization.
+		*/
     const n = sorted.length;
     if (n <= k) return sorted.slice(0, -1);
     const N = Math.min(n, 600), st = Math.max(1, Math.floor(n / N));
@@ -562,7 +580,7 @@
     return `rgb(${Math.round(r + (255 - r) * amt)},${Math.round(g + (255 - g) * amt)},${Math.round(b + (255 - b) * amt)})`;
   }
 
-  function strokeFor(iso) {
+  function strokeFor(iso) {	// Border color, normal and highlighted
     if (iso === clickedISO) return '#111';
     return selectedISOs.size === 0 || selectedISOs.has(iso) ? 'rgba(40,40,40,0.55)' : 'rgba(160,160,160,0.25)';
   }
@@ -660,6 +678,15 @@
   }
 
   // ── Tooltip ──────────────────────────────────────────────────────────────
+	/* Included information are
+			1. Country name
+			2. Current date
+			3. Population
+			4. Cases raw count
+			5. Cases normalized
+			6. Deaths raw count
+			7. Deaths normalized
+	*/
   function fmt(v) { return v == null ? '—' : v.toLocaleString(); }
   function fmtN(v) { return v == null ? '—' : v.toFixed(2); }
 
@@ -710,6 +737,7 @@
   }
 
   // ── Sparkline ────────────────────────────────────────────────────────────
+	// Displays the rise and fall of the selected metric and scale of a selected country
   let sparkISO = null, sparkX = null, sparkY = null, sparkPts = null;
 
   function updateSparkCursor() {
@@ -827,7 +855,7 @@
     updateSparkCursor();
   }
 
-  // ── Legend ───────────────────────────────────────────────────────────────
+  // ── Legend / Bin classes ────────────────────────────────────────────────
   function fmtT(v) {
     if (v == null) return '';
     if (scale === 'norm') return v < 1 ? v.toFixed(2) : v.toFixed(1);
@@ -955,6 +983,8 @@
   });
 
   // ── Toggles ──────────────────────────────────────────────────────────────
+	// Metric button, scale button
+	// Recolor the map and redraw the sparkline
   document.querySelectorAll('#metric-tog .tog-btn').forEach(btn => btn.addEventListener('click', () => {
     document.querySelectorAll('#metric-tog .tog-btn').forEach(b => b.classList.remove('on'));
     btn.classList.add('on'); metric = btn.dataset.v;
@@ -1036,7 +1066,7 @@
 
 })();
 
-// Theme toggle — outside IIFE so onclick="" can reach it
+// Light / dark mode theme toggle — outside IIFE so onclick="" can reach it
 function toggleTheme() {
   const root = document.documentElement;
   const isDark = root.classList.contains('dark') ||
