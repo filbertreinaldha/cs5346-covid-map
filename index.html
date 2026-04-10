@@ -674,10 +674,7 @@
     document.getElementById('tt-nd').textContent  = r ? fmt(r.nd)   : '—';
     document.getElementById('tt-ndn').textContent = r ? fmtN(r.ndn) : '—';
     // Highlight matching legend swatch
-    const date = allDates[dateIdx] || '';
-    const field = getField();
-    const entry = getEntry(iso, date);
-    const v = entry ? entry[field] : null;
+    const v = r ? r[getField()] : null;
     const b = binIdxFor(v);
     document.querySelectorAll('.sw').forEach((sw, i) => {
       sw.classList.toggle('legend-active', i === b && b >= 0);
