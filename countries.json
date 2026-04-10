@@ -145,7 +145,7 @@
   },
   "BLM": {
     "iso2": "BL",
-    "name": "Saint Barthï¿½lemy",
+    "name": "Saint Barthélemy",
     "continent": "North America",
     "population": 10948
   },
@@ -235,7 +235,7 @@
   },
   "CIV": {
     "iso2": "CI",
-    "name": "Cï¿½te d'Ivoire",
+    "name": "Côte d'Ivoire",
     "continent": "Africa",
     "population": 30395004
   },
@@ -295,7 +295,7 @@
   },
   "CUW": {
     "iso2": "CW",
-    "name": "Curaï¿½ao",
+    "name": "Curaçao",
     "continent": "North America",
     "population": 185350
   },
@@ -1051,7 +1051,7 @@
   },
   "REU": {
     "iso2": "RE",
-    "name": "Rï¿½union",
+    "name": "Réunion",
     "continent": "Africa",
     "population": 871543
   },
