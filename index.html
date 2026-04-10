@@ -249,9 +249,16 @@
     #legend-row { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
     #legend-title { font-size: 10px; color: var(--text2); font-weight: 500; white-space: nowrap; padding-top: 1px; }
     #legend-swatches { display: flex; gap: 3px; flex-wrap: wrap; align-items: flex-start; }
-    .sw { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
-    .sw-rect { width: 26px; height: 11px; border-radius: 2px; }
+    .sw { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; cursor: pointer; }
+    .sw-rect { width: 26px; height: 11px; border-radius: 2px; transition: transform 0.15s, box-shadow 0.15s; }
     .sw-lbl { font-size: 8px; color: var(--text2); white-space: nowrap; }
+    .sw:hover .sw-rect, .sw.legend-active .sw-rect {
+      transform: scaleY(1.6); box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+    }
+    .sw.legend-active .sw-lbl { color: var(--text); font-weight: 500; }
+    /* Country highlight when legend bin is hovered */
+    .cpath.bin-highlight { stroke: var(--text) !important; stroke-width: 1.2 !important; }
+    .cpath.bin-dim       { opacity: 0.2; }
     #legend-specials { display: flex; gap: 10px; align-items: center; margin-left: 4px; }
     .sp-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text2); }
     .sp-box { width: 13px; height: 11px; border-radius: 2px; flex-shrink: 0; }
@@ -533,14 +540,20 @@
   }
 
   // ── Color helpers ────────────────────────────────────────────────────────
+  // Returns the bin index (0-based) for a value, or -1 for null/zero/no-data
+  function binIdxFor(v) {
+    if (v === null || v === undefined || v === 0 || !bins) return -1;
+    let idx = 0;
+    for (let i = 0; i < bins.thresholds.length; i++) { if (v >= bins.thresholds[i]) idx = i + 1; }
+    return Math.min(idx, bins.ramp.length - 1);
+  }
+
   function colorFor(v, iso) {
     const dimmed = selectedISOs.size > 0 && !selectedISOs.has(iso);
     if (v === null || v === undefined) return null;
     if (v === 0) return dimmed ? '#F3F4F6' : C_ZERO;
     if (!bins) return C_ZERO;
-    let idx = 0;
-    for (let i = 0; i < bins.thresholds.length; i++) { if (v >= bins.thresholds[i]) idx = i + 1; }
-    const c = bins.ramp[Math.min(idx, bins.ramp.length - 1)];
+    const c = bins.ramp[binIdxFor(v)];
     return dimmed ? fadeHex(c, 0.58) : c;
   }
 
@@ -587,7 +600,7 @@
       .attr('stroke', d => strokeFor(isoFromProps(d.properties)))
       .attr('stroke-width', d => isoFromProps(d.properties) === clickedISO ? 2 : 0.35)
       .on('mousemove', onHover)
-      .on('mouseleave', () => { tt.style.display = 'none'; hoveredISO = null; hoveredEvent = null; })
+      .on('mouseleave', () => { tt.style.display = 'none'; hoveredISO = null; hoveredEvent = null; document.querySelectorAll('.sw').forEach(sw => sw.classList.remove('legend-active')); })
       .on('click', onClick);
 
     // Singapore point marker (too small for 110m polygons)
@@ -596,7 +609,7 @@
       const sgpG = g.append('g').attr('class', 'sgp-dot').attr('transform', `translate(${sgpPx[0]},${sgpPx[1]})`);
       sgpG.append('circle').attr('r', 3.5).attr('fill', 'url(#hatch)').attr('stroke', 'rgba(40,40,40,0.55)').attr('stroke-width', 0.6).attr('data-iso', 'SGP');
       sgpG.on('mousemove', (event) => onHoverISO(event, 'SGP'))
-          .on('mouseleave', () => { tt.style.display = 'none'; hoveredISO = null; hoveredEvent = null; })
+          .on('mouseleave', () => { tt.style.display = 'none'; hoveredISO = null; hoveredEvent = null; document.querySelectorAll('.sw').forEach(sw => sw.classList.remove('legend-active')); })
           .on('click', (event) => { event.stopPropagation(); toggleClick('SGP'); });
     }
 
@@ -617,13 +630,13 @@
       const iso = isoFromProps(d.properties);
       const entry = iso ? getEntry(iso, date) : null;
       const v = entry ? entry[field] : null;
+      const binIdx = binIdxFor(v);
       const fill = colorFor(v, iso);
       const el = d3.select(this);
-      // Stroke updates are always instant (structural, not data)
-      el.attr('stroke', strokeFor(iso))
+      el.attr('data-bin', binIdx)
+        .attr('stroke', strokeFor(iso))
         .attr('stroke-width', iso === clickedISO ? 2 : 0.35);
       if (fill === null) {
-        // No transition possible to/from svg pattern reference
         el.attr('fill', 'url(#hatch)');
       } else {
         el.transition().duration(ms).ease(d3.easeCubicOut)
@@ -660,6 +673,15 @@
     document.getElementById('tt-ncn').textContent = r ? fmtN(r.ncn) : '—';
     document.getElementById('tt-nd').textContent  = r ? fmt(r.nd)   : '—';
     document.getElementById('tt-ndn').textContent = r ? fmtN(r.ndn) : '—';
+    // Highlight matching legend swatch
+    const date = allDates[dateIdx] || '';
+    const field = getField();
+    const entry = getEntry(iso, date);
+    const v = entry ? entry[field] : null;
+    const b = binIdxFor(v);
+    document.querySelectorAll('.sw').forEach((sw, i) => {
+      sw.classList.toggle('legend-active', i === b && b >= 0);
+    });
     positionTooltip(event);
     tt.style.display = 'block';
   }
@@ -817,6 +839,26 @@
     return Math.round(v).toString();
   }
 
+  function highlightBin(binIdx) {
+    svg.selectAll('.cpath').each(function() {
+      const b = +this.getAttribute('data-bin');
+      d3.select(this)
+        .classed('bin-highlight', b === binIdx)
+        .classed('bin-dim', b !== binIdx);
+    });
+    // Mark active swatch
+    document.querySelectorAll('.sw').forEach((sw, i) => {
+      sw.classList.toggle('legend-active', i === binIdx);
+    });
+  }
+
+  function clearBinHighlight() {
+    svg.selectAll('.cpath')
+      .classed('bin-highlight', false)
+      .classed('bin-dim', false);
+    document.querySelectorAll('.sw').forEach(sw => sw.classList.remove('legend-active'));
+  }
+
   function updateLegend() {
     if (!bins) return;
     const { thresholds: th, ramp } = bins;
@@ -831,6 +873,8 @@
       const lbl = i === 0 ? `<${fmtT(hi)}` : i === ramp.length - 1 ? `>${fmtT(lo)}` : `${fmtT(lo)}–${fmtT(hi)}`;
       const sw = document.createElement('div'); sw.className = 'sw';
       sw.innerHTML = `<div class="sw-rect" style="background:${c}"></div><div class="sw-lbl">${lbl}</div>`;
+      sw.addEventListener('mouseenter', () => highlightBin(i));
+      sw.addEventListener('mouseleave', clearBinHighlight);
       con.appendChild(sw);
     });
   }
